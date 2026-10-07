@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RIPPLE: Autonomous V2V Traffic Network Simulation</title>
+    <style>
+        /* Base Environment - Top-Down Technical Traffic Management Aesthetic */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #04070D;
+            color: #C2CBD8;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "SF Pro Text", "Helvetica Neue", sans-serif;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            user-select: none;
+        }
+
+        /* Technical HUD Badge */
+        #hud-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(8, 13, 22, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-left: 3px solid #5BC0BE;
+            padding: 8px 14px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'SF Mono', Monaco, monospace;
+            font-size: 11px;
+            letter-spacing: 0.8px;
+            z-index: 100;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+            line-height: 1.5;
+        }
+
+        #hud-panel .title {
+            color: #FFFFFF;
+            font-weight: 700;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            margin-bottom: 2px;
+        }
+
+        #hud-panel .title::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            background-color: #5BC0BE;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #5BC0BE;
+        }
+
+        #hud-panel .meta {
+            color: #6C7D93;
+            font-size: 10px;
+        }
+
+        #simulation-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 176, 0, 0.08);
+            border: 1px solid rgba(255, 176, 0, 0.35);
+            color: #FFB000;
+            padding: 6px 12px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'SF Mono', monospace;
+            font-weight: 700;
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            z-index: 100;
+            backdrop-filter: blur(6px);
+        }
+
+        /* 1200x800 Simulation Viewport */
+        #app-container {
+            position: relative;
+            width: 1200px;
+            height: 800px;
+            overflow: hidden;
+            background-color: #070B12;
+            border: 1px solid #141E2E;
+            border-radius: 6px;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.95);
+        }
+
+        #network-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Background Blocks / City Context */
+        .city-block {
+            fill: #0B101A;
+            stroke: #121A28;
+            stroke-width: 1px;
+        }
+        .city-lot {
+            fill: #0E1522;
+            stroke: #152030;
+            stroke-width: 0.75px;
+        }
+        .green-parcel {
+            fill: #0A141A;
+            stroke: #112028;
+            stroke-width: 0.75px;
+        }
+
+        /* Road Hierarchy Styles */
+        .road-underlay {
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .road-surface {
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .road-marking {
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        /* Major Arterial Highway */
+        .arterial-underlay { stroke: #121A28; stroke-width: 38px; }
+        .arterial-surface  { stroke: #1B2638; stroke-width: 32px; }
+        .arterial-marking  { stroke: #384A64; stroke-width: 2px; stroke-dasharray: 10 12; }
+
+        /* Secondary Avenues & Connectors */
+        .secondary-underlay { stroke: #101622; stroke-width: 26px; }
+        .secondary-surface  { stroke: #152030; stroke-width: 22px; }
+        .secondary-marking  { stroke: #2A3A4F; stroke-width: 1.5px; stroke-dasharray: 7 9; opacity: 0.65; }
+
+        /* Local Connectors */
+        .local-underlay { stroke: #0E141E; stroke-width: 18px; }
+        .local-surface  { stroke: #121B27; stroke-width: 15px; }
+        .local-marking  { stroke: #202D3F; stroke-width: 1px; stroke-dasharray: 4 6; opacity: 0.45; }
+
+        /* Vehicles Layer */
+        #cars-container {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        #ambient-container {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .vehicle-node {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+            z-index: 20;
+        }
+
+        /* RIPPLE vehicle dots */
+        .node-core {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #5BC0BE;
+            box-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+            z-index: 3;
+            transition: background-color 0.3s ease;
+        }
+
+        .node-ring {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 1.5px solid #5BC0BE;
+            opacity: 0.45;
+            z-index: 2;
+            transition: border-color 0.3s ease;
+        }
+
+        .node-pulse-emitter {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            z-index: 1;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .vehicle-node.active-state .node-pulse-emitter {
+            animation: restrainedPulse 2.0s cubic-bezier(0.1, 0.8, 0.3, 1) infinite;
+        }
+
+        @keyframes restrainedPulse {
+            0% { transform: scale(1); opacity: 0.65; box-shadow: 0 0 6px currentColor; }
+            100% { transform: scale(3.2); opacity: 0; box-shadow: 0 0 14px currentColor; }
+        }
+
+        /* Node HUD tags */
+        .node-tag {
+            position: absolute;
+            top: -19px;
+            left: 11px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-family: 'Consolas', 'SF Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: #FFFFFF;
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+            pointer-events: none;
+        }
+
+        .node-subtag {
+            font-size: 8.5px;
+            padding: 1px 4px;
+            border-radius: 2px;
+            background: rgba(8, 13, 22, 0.92);
+            border: 1px solid transparent;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        /* Subtle Ambient Background Traffic */
+        .ambient-dot {
+            position: absolute;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background-color: #38485E;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0.65;
+        }
+
+        /* Wireless Signal Broadcast Ripple */
+        .v2v-ripple {
+            position: absolute;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 15;
+            animation: v2vExpand 1.3s cubic-bezier(0.1, 0.7, 0.25, 1) forwards;
+        }
+
+        @keyframes v2vExpand {
+            0%   { width: 0; height: 0; opacity: 0.85; border: 2.5px solid; }
+            100% { width: 340px; height: 340px; opacity: 0; border: 1px solid; }
+        }
+
+        /* Invisible Interaction Sensor Hitboxes */
+        .sensor-hitbox {
+            position: absolute;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            cursor: crosshair;
+            z-index: 25;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: transparent;
+            border: 1px solid transparent;
+        }
+
+        .sensor-hitbox:hover::after {
+            content: 'TRIGGER SENSOR';
+            position: absolute;
+            bottom: -16px;
+            font-family: 'Consolas', 'SF Mono', monospace;
+            font-size: 8px;
+            font-weight: 700;
+            color: #FFB000;
+            background: rgba(8, 13, 22, 0.94);
+            border: 1px solid rgba(255, 176, 0, 0.4);
+            padding: 1px 5px;
+            border-radius: 2px;
+            letter-spacing: 0.8px;
+            white-space: nowrap;
+        }
+
+        .sensor-hitbox:hover {
+            border: 1px dashed rgba(255, 176, 0, 0.6);
+            background: rgba(255, 176, 0, 0.04);
+        }
+
+        /* Tooltip Overlay */
+        #tooltip {
+            position: absolute;
+            background: rgba(7, 11, 19, 0.96);
+            border: 1px solid #5BC0BE;
+            border-radius: 3px;
+            padding: 10px 13px;
+            font-family: 'Consolas', 'SF Mono', monospace;
+            font-size: 10.5px;
+            color: #E2E8F0;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.18s ease;
+            z-index: 300;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85);
+            white-space: nowrap;
+            transform: translate(-50%, -100%);
+            backdrop-filter: blur(6px);
+        }
+
+        .tooltip-hdr {
+            font-weight: 700;
+            color: #FFB000;
+            font-size: 11px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 4px;
+            margin-bottom: 6px;
+            letter-spacing: 1px;
+        }
+
+        .tooltip-log {
+            color: #8393A7;
+            line-height: 1.5;
+            margin-bottom: 6px;
+        }
+
+        .tooltip-log b { color: #FFFFFF; font-weight: 700; }
+
+        .tooltip-rule {
+            color: #04070D;
+            background: #5BC0BE;
+            padding: 3px 6px;
+            border-radius: 2px;
+            font-weight: 700;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="hud-panel">
+        <div class="title">RIPPLE / V2V RESEARCH PLATFORM</div>
+        <div class="meta">TOPOLOGY: ORGANIC ARTERIAL | SENSORS: DUAL-ORIGIN</div>
+    </div>
+
+    <div id="simulation-badge">SIMULATION MODE</div>
+
+    <div id="app-container">
+        <!-- SVG Map Network -->
+        <svg id="network-svg" viewBox="0 0 1200 800">
+            <!-- 1. Irregular Urban Blocks / Parcels -->
+            <g id="urban-environment">
+                <!-- North-West Quadrant -->
+                <polygon class="city-block" points="30,30 240,30 220,130 30,170" />
+                <polygon class="city-lot" points="45,45 130,45 125,120 45,120" />
+                <polygon class="city-lot" points="140,45 225,45 210,120 135,120" />
+                
+                <polygon class="city-block" points="260,30 520,30 500,120 280,120" />
+                <polygon class="green-parcel" points="275,45 490,45 480,105 285,105" />
+
+                <!-- North-East Quadrant -->
+                <polygon class="city-block" points="580,30 840,30 820,140 590,140" />
+                <polygon class="city-lot" points="600,45 710,45 705,125 600,125" />
+                <polygon class="city-lot" points="720,45 825,45 810,125 715,125" />
+                
+                <polygon class="city-block" points="880,30 1170,30 1170,160 890,140" />
+                <polygon class="city-lot" points="900,45 1020,45 1015,130 900,130" />
+                <polygon class="city-lot" points="1035,45 1150,45 1150,140 1030,140" />
+
+                <!-- Central Bypass Corridor Enclaves -->
+                <polygon class="city-block" points="50,220 200,200 180,380 40,380" />
+                <polygon class="green-parcel" points="60,230 185,215 170,365 55,365" />
+
+                <polygon class="city-block" points="290,160 520,160 510,290 280,260" />
+                <polygon class="city-lot" points="305,175 420,175 415,250 300,240" />
+                <polygon class="city-lot" points="430,175 505,175 498,275 425,255" />
+
+                <polygon class="city-block" points="620,170 810,170 800,280 610,280" />
+                <polygon class="city-lot" points="635,185 795,185 785,265 625,265" />
+
+                <!-- Hazard Quadrant Enclaves (Enclosed by Main Arterial and East Ring) -->
+                <polygon class="city-block" points="630,340 850,320 830,440 640,430" />
+                <polygon class="city-lot" points="645,355 835,335 820,425 650,418" />
+
+                <polygon class="city-block" points="890,200 1160,200 1160,330 950,330" />
+                <polygon class="city-lot" points="910,215 1030,215 1025,315 920,315" />
+                <polygon class="city-lot" points="1045,215 1145,215 1145,315 1040,315" />
+
+                <!-- South-West Quadrant -->
+                <polygon class="city-block" points="40,440 220,440 200,600 40,600" />
+                <polygon class="city-lot" points="55,455 205,455 190,585 55,585" />
+
+                <polygon class="city-block" points="260,350 480,350 460,540 250,500" />
+                <polygon class="green-parcel" points="275,365 465,365 450,520 265,485" />
+
+                <!-- South-Central Blocks -->
+                <polygon class="city-block" points="530,480 820,470 830,620 540,640" />
+                <polygon class="city-lot" points="550,495 690,490 695,620 555,625" />
+                <polygon class="city-lot" points="705,490 805,485 815,605 710,615" />
+
+                <!-- South-East Blocks -->
+                <polygon class="city-block" points="920,420 1160,400 1160,580 940,600" />
+                <polygon class="city-lot" points="940,435 1040,425 1040,575 950,580" />
+                <polygon class="city-lot" points="1055,420 1145,415 1145,565 1055,570" />
+
+                <!-- Far South Waterfront / Park Buffer -->
+                <polygon class="city-block" points="40,650 320,650 300,770 40,770" />
+                <polygon class="city-lot" points="55,665 180,665 175,755 55,755" />
+                <polygon class="city-lot" points="195,665 295,665 285,755 190,755" />
+
+                <polygon class="city-block" points="380,670 760,670 750,770 390,770" />
+                <polygon class="green-parcel" points="400,685 740,685 730,755 405,755" />
+
+                <polygon class="city-block" points="820,660 1160,650 1160,770 830,770" />
+                <polygon class="city-lot" points="840,675 990,670 990,755 845,755" />
+                <polygon class="city-lot" points="1005,670 1145,665 1145,755 1005,755" />
+            </g>
+
+            <!-- 2. Road Layers: Underlays -> Surfaces -> Markings -->
+            <!-- Group A: Underlays -->
+            <g id="roads-underlay">
+                <!-- Arterial Highway (West to South-East via central curve) -->
+                <path class="road-underlay arterial-underlay" d="M -30,410 C 150,410 250,420 380,390 C 510,360 680,300 800,310 C 920,320 1040,440 1230,450" />
+                
+                <!-- Secondary Corridors -->
+                <!-- North-West Arc / Alternate Bypass (Bypasses J3 Hazard at 790,309) -->
+                <path class="road-underlay secondary-underlay" d="M 230,-30 C 240,90 230,160 380,180 C 520,200 680,140 860,180 C 980,210 1020,330 1050,440 C 1080,560 1060,700 1050,830" />
+                <!-- South-West Diagonal Connector -->
+                <path class="road-underlay secondary-underlay" d="M -30,620 C 120,620 260,630 380,560 C 500,490 600,450 780,460 C 920,470 1060,440 1230,450" />
+                <!-- Transversal Spinal Avenue -->
+                <path class="road-underlay secondary-underlay" d="M 550,-30 C 560,120 540,240 560,370 C 580,500 580,660 590,830" />
+
+                <!-- Local Roads & Connectors -->
+                <path class="road-underlay local-underlay" d="M -30,190 C 100,190 220,180 380,180" />
+                <path class="road-underlay local-underlay" d="M 380,180 C 380,260 380,330 380,390" />
+                <path class="road-underlay local-underlay" d="M 380,390 C 380,460 380,510 380,560" />
+                <path class="road-underlay local-underlay" d="M 800,310 C 790,370 780,410 780,460" />
+                <path class="road-underlay local-underlay" d="M 860,180 C 960,170 1080,160 1230,180" />
+                <path class="road-underlay local-underlay" d="M 380,560 C 380,650 370,740 360,830" />
+                <path class="road-underlay local-underlay" d="M 780,460 C 790,560 800,680 800,830" />
+            </g>
+
+            <!-- Group B: Asphalt Surfaces -->
+            <g id="roads-surface">
+                <!-- Arterial Highway -->
+                <path class="road-surface arterial-surface" d="M -30,410 C 150,410 250,420 380,390 C 510,360 680,300 800,310 C 920,320 1040,440 1230,450" />
+                
+                <!-- Secondary Corridors -->
+                <path class="road-surface secondary-surface" d="M 230,-30 C 240,90 230,160 380,180 C 520,200 680,140 860,180 C 980,210 1020,330 1050,440 C 1080,560 1060,700 1050,830" />
+                <path class="road-surface secondary-surface" d="M -30,620 C 120,620 260,630 380,560 C 500,490 600,450 780,460 C 920,470 1060,440 1230,450" />
+                <path class="road-surface secondary-surface" d="M 550,-30 C 560,120 540,240 560,370 C 580,500 580,660 590,830" />
+
+                <!-- Local Roads -->
+                <path class="road-surface local-surface" d="M -30,190 C 100,190 220,180 380,180" />
+                <path class="road-surface local-surface" d="M 380,180 C 380,260 380,330 380,390" />
+                <path class="road-surface local-surface" d="M 380,390 C 380,460 380,510 380,560" />
+                <path class="road-surface local-surface" d="M 800,310 C 790,370 780,410 780,460" />
+                <path class="road-surface local-surface" d="M 860,180 C 960,170 1080,160 1230,180" />
+                <path class="road-surface local-surface" d="M 380,560 C 380,650 370,740 360,830" />
+                <path class="road-surface local-surface" d="M 780,460 C 790,560 800,680 800,830" />
+            </g>
+
+            <!-- Group C: Lane Markings -->
+            <g id="roads-marking">
+                <path class="road-marking arterial-marking" d="M -30,410 C 150,410 250,420 380,390 C 510,360 680,300 800,310 C 920,320 1040,440 1230,450" />
+                <path class="road-marking secondary-marking" d="M 230,-30 C 240,90 230,160 380,180 C 520,200 680,140 860,180 C 980,210 1020,330 1050,440 C 1080,560 1060,700 1050,830" />
+                <path class="road-marking secondary-marking" d="M -30,620 C 120,620 260,630 380,560 C 500,490 600,450 780,460 C 920,470 1060,440 1230,450" />
+                <path class="road-marking secondary-marking" d="M 550,-30 C 560,120 540,240 560,370 C 580,500 580,660 590,830" />
+                
+                <path class="road-marking local-marking" d="M 380,180 C 380,260 380,330 380,390" />
+                <path class="road-marking local-marking" d="M 380,390 C 380,460 380,510 380,560" />
+                <path class="road-marking local-marking" d="M 800,310 C 790,370 780,410 780,460" />
+            </g>
+        </svg>
+
+        <!-- Ambient Background Traffic Layer -->
+        <div id="ambient-container"></div>
+
+        <!-- RIPPLE Vehicles Container -->
+        <div id="cars-container"></div>
+
+        <!-- RIPPLE Interactive Sensor Hitboxes -->
+        <div id="sensor-A" class="sensor-hitbox" title="Click to trigger Car A Sensor"></div>
+        <div id="sensor-B" class="sensor-hitbox" title="Click to trigger Car B Sensor"></div>
+
+        <!-- Hover Decision Telemetry Tooltip -->
+        <div id="tooltip"></div>
+    </div>
+
+    <script>
+        /**
+         * RIPPLE: Vehicle-to-Vehicle Hazard Warning System
+         * 
+         * COLOR HIERARCHY:
+         * Teal (#5BC0BE)     - UNVERIFIED / Neutral / Relaying
+         * Amber (#FFB000)    - CAUTION
+         * Red/Coral (#FF6B6B)- CONFIRMED
+         */
+        const COLORS = {
+            TEAL: '#5BC0BE',
+            AMBER: '#FFB000',
+            CORAL: '#FF6B6B'
+        };
+
+        const BASE_CRUISE_SPEED = 36; // px/sec - Steady readable observation pace
+
+        // =====================================================================
+        // 1. ORGANIC ROAD NETWORK & GEOMETRIC PATH WAYPOINTS
+        // =====================================================================
+
+        function computeCubicBezier(p0, p1, p2, p3, t) {
+            const mt = 1 - t;
+            return {
+                x: mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x,
+                y: mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y
+            };
+        }
+
+        function sampleCubicBezier(p0, p1, p2, p3, steps = 30) {
+            const pts = [];
+            for (let i = 0; i <= steps; i++) {
+                pts.push(computeCubicBezier(p0, p1, p2, p3, i / steps));
+            }
+            return pts;
+        }
+
+        // --- Major Arterial Waypoints (West to East across J1 at 380,390, J2 at 560,370, J3 at 800,310) ---
+        // Blockage is between J2 (560,370) and J3 (800,310) at x:720, y:307
+        const PATH_MAIN_ARTERIAL = [
+            ...sampleCubicBezier({x: -40, y: 410}, {x: 150, y: 410}, {x: 250, y: 420}, {x: 380, y: 390}, 25), // Approaches J1
+            ...sampleCubicBezier({x: 380, y: 390}, {x: 440, y: 375}, {x: 500, y: 365}, {x: 560, y: 370}, 20), // Approaches J2
+            ...sampleCubicBezier({x: 560, y: 370}, {x: 650, y: 310}, {x: 720, y: 307}, {x: 800, y: 310}, 25), // Passes hazard to J3
+            ...sampleCubicBezier({x: 800, y: 310}, {x: 920, y: 320}, {x: 1040, y: 440}, {x: 1240, y: 450}, 30) // Exits via East Delta
+        ];
+
+        // --- Alternate Bypass Route 1 (North Arc: Diverges at J1 (380,390), traverses J_NW, J_NE, and merges back at J4) ---
+        const PATH_ALT_NORTH_BYPASS = [
+            ...sampleCubicBezier({x: -40, y: 410}, {x: 150, y: 410}, {x: 250, y: 420}, {x: 380, y: 390}, 25), // To J1
+            ...sampleCubicBezier({x: 380, y: 390}, {x: 380, y: 320}, {x: 380, y: 240}, {x: 380, y: 180}, 22), // Turns North to J_NW
+            ...sampleCubicBezier({x: 380, y: 180}, {x: 520, y: 200}, {x: 680, y: 140}, {x: 860, y: 180}, 35), // North Scenic Arc to J_NE
+            ...sampleCubicBezier({x: 860, y: 180}, {x: 980, y: 210}, {x: 1020, y: 330}, {x: 1050, y: 440}, 28), // Sweeps down around blockage
+            ...sampleCubicBezier({x: 1050, y: 440}, {x: 1100, y: 443}, {x: 1160, y: 446}, {x: 1240, y: 450}, 15) // Reconnects and exits
+        ];
+
+        // --- Alternate Bypass Route 2 (South Arc: Diverges at J2 (560,370), loops down to J_SW and rejoins at J4) ---
+        const PATH_ALT_SOUTH_BYPASS = [
+            ...sampleCubicBezier({x: -40, y: 410}, {x: 150, y: 410}, {x: 250, y: 420}, {x: 380, y: 390}, 25),
+            ...sampleCubicBezier({x: 380, y: 390}, {x: 440, y: 375}, {x: 500, y: 365}, {x: 560, y: 370}, 20), // Reaches J2
+            ...sampleCubicBezier({x: 560, y: 370}, {x: 570, y: 430}, {x: 650, y: 455}, {x: 780, y: 460}, 25), // Dives South-East
+            ...sampleCubicBezier({x: 780, y: 460}, {x: 920, y: 470}, {x: 1060, y: 440}, {x: 1240, y: 450}, 30) // Merges past hazard
+        ];
+
+        // --- Ambient Background Traffic Corridors (Non-RIPPLE vehicles) ---
+        const AMBIENT_ROUTES = [
+            // North-South Spinal Cross
+            [{x: 550, y: -30}, {x: 555, y: 120}, {x: 560, y: 370}, {x: 575, y: 560}, {x: 590, y: 830}],
+            [{x: 590, y: 830}, {x: 575, y: 560}, {x: 560, y: 370}, {x: 555, y: 120}, {x: 550, y: -30}],
+            // South-West Diagonal
+            [{x: -30, y: 620}, {x: 200, y: 625}, {x: 380, y: 560}, {x: 580, y: 460}, {x: 780, y: 460}],
+            // East Coastal Loop
+            [{x: 860, y: 180}, {x: 1000, y: 220}, {x: 1050, y: 440}, {x: 1060, y: 650}, {x: 1050, y: 830}],
+            // West Connector
+            [{x: 230, y: -30}, {x: 235, y: 120}, {x: 380, y: 180}, {x: 380, y: 390}, {x: 380, y: 560}],
+            // North-East Local Spur
+            [{x: 860, y: 180}, {x: 980, y: 175}, {x: 1100, y: 170}, {x: 1240, y: 180}]
+        ];
+
+        // =====================================================================
+        // 2. RIPPLE VEHICLE DATA & TOPOLOGICAL ALLOCATION
+        // =====================================================================
+
+        // Starting points along the network approaching the hazard zone
+        // Car A is approaching the blockage (index 62 of 100)
+        // Car B is approaching J2 intersection (index 43)
+        // Car C is on the mid-arterial segment (index 27)
+        // Car D is on the western approach before the major divergence at J1 (index 10)
+        const carsData = {
+            A: { id: 'A', path: PATH_MAIN_ARTERIAL, targetPath: PATH_MAIN_ARTERIAL, pathIdx: 62, currentX: 685, currentY: 308, laneOffset: 0, targetLaneOffset: 0, speed: BASE_CRUISE_SPEED, targetSpeed: BASE_CRUISE_SPEED, events: [], isHovered: false, ruleReason: "NO EVENTS → NORMAL", domInfo: {} },
+            B: { id: 'B', path: PATH_MAIN_ARTERIAL, targetPath: PATH_MAIN_ARTERIAL, pathIdx: 43, currentX: 520, currentY: 366, laneOffset: 0, targetLaneOffset: 0, speed: BASE_CRUISE_SPEED, targetSpeed: BASE_CRUISE_SPEED, events: [], isHovered: false, ruleReason: "NO EVENTS → NORMAL", domInfo: {} },
+            C: { id: 'C', path: PATH_MAIN_ARTERIAL, targetPath: PATH_MAIN_ARTERIAL, pathIdx: 27, currentX: 395, currentY: 387, laneOffset: 0, targetLaneOffset: 0, speed: BASE_CRUISE_SPEED, targetSpeed: BASE_CRUISE_SPEED, events: [], isHovered: false, ruleReason: "NO EVENTS → NORMAL", domInfo: {} },
+            D: { id: 'D', path: PATH_MAIN_ARTERIAL, targetPath: PATH_MAIN_ARTERIAL, pathIdx: 10, currentX: 175, currentY: 412, laneOffset: 0, targetLaneOffset: 0, speed: BASE_CRUISE_SPEED, targetSpeed: BASE_CRUISE_SPEED, events: [], isHovered: false, ruleReason: "NO EVENTS → NORMAL", domInfo: {} }
+        };
+
+        // Strict RIPPLE sequential relay chain
+        const nextCarMap = { 'A': 'B', 'B': 'C', 'C': 'D', 'D': null };
+
+        // Relative spatial lead vehicle tracking for following distance safety
+        const followingLeadMap = { 'D': 'C', 'C': 'B', 'B': 'A', 'A': null };
+
+        // Ambient traffic pool
+        const ambientVehicles = [
+            { route: AMBIENT_ROUTES[0], ptIdx: 0, speed: 28, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[0], ptIdx: 2, speed: 30, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[1], ptIdx: 1, speed: 29, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[2], ptIdx: 0, speed: 26, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[2], ptIdx: 2, speed: 27, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[3], ptIdx: 1, speed: 32, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[4], ptIdx: 0, speed: 25, x: 0, y: 0, el: null },
+            { route: AMBIENT_ROUTES[5], ptIdx: 1, speed: 31, x: 0, y: 0, el: null }
+        ];
+
+        // =====================================================================
+        // 3. INITIALIZATION & DOM GENERATION
+        // =====================================================================
+
+        let simulationInitialized = false;
+
+        function initSimulation() {
+            if (simulationInitialized) return;
+            simulationInitialized = true;
+
+            const container = document.getElementById('cars-container');
+            const ambientContainer = document.getElementById('ambient-container');
+
+            if (!container) {
+                console.error("Critical: #cars-container element missing from DOM");
+                return;
+            }
+
+            // 1. Spawn RIPPLE Nodes A, B, C, D
+            Object.keys(carsData).forEach(id => {
+                const car = carsData[id];
+                
+                // Safe robust initial point determination
+                const pt = (car.path && car.path[car.pathIdx]) ? car.path[car.pathIdx] : { x: car.currentX, y: car.currentY };
+                car.currentX = Number.isFinite(pt.x) ? pt.x : (Number.isFinite(car.currentX) ? car.currentX : 100);
+                car.currentY = Number.isFinite(pt.y) ? pt.y : (Number.isFinite(car.currentY) ? car.currentY : 400);
+
+                const nodeEl = document.createElement('div');
+                nodeEl.className = 'vehicle-node';
+                nodeEl.style.left = `${car.currentX}px`;
+                nodeEl.style.top = `${car.currentY}px`;
+
+                const tag = document.createElement('div');
+                tag.className = 'node-tag';
+                tag.innerHTML = `${id} <span class="node-subtag">NORMAL</span>`;
+
+                const ring = document.createElement('div');
+                ring.className = 'node-ring';
+
+                const emitter = document.createElement('div');
+                emitter.className = 'node-pulse-emitter';
+
+                const core = document.createElement('div');
+                core.className = 'node-core';
+
+                nodeEl.appendChild(tag);
+                nodeEl.appendChild(ring);
+                nodeEl.appendChild(emitter);
+                nodeEl.appendChild(core);
+                container.appendChild(nodeEl);
+
+                car.domInfo = {
+                    nodeEl,
+                    core,
+                    ring,
+                    emitter,
+                    subtag: tag.querySelector('.node-subtag')
+                };
+
+                // Tooltip trigger listeners
+                nodeEl.addEventListener('mouseenter', () => showTooltip(id));
+                nodeEl.addEventListener('mouseleave', () => hideTooltip(id));
+            });
+
+            // 2. Position sensor hitboxes immediately
+            const sensorA = document.getElementById('sensor-A');
+            const sensorB = document.getElementById('sensor-B');
+            if (sensorA && carsData.A) {
+                sensorA.style.left = `${carsData.A.currentX}px`;
+                sensorA.style.top = `${carsData.A.currentY}px`;
+            }
+            if (sensorB && carsData.B) {
+                sensorB.style.left = `${carsData.B.currentX}px`;
+                sensorB.style.top = `${carsData.B.currentY}px`;
+            }
+
+            // 3. Spawn Ambient Background Vehicles
+            if (ambientContainer) {
+                ambientVehicles.forEach(v => {
+                    const dot = document.createElement('div');
+                    dot.className = 'ambient-dot';
+                    ambientContainer.appendChild(dot);
+                    v.el = dot;
+                    const initialPt = v.route && v.route[v.ptIdx] ? v.route[v.ptIdx] : { x: 0, y: 0 };
+                    v.x = initialPt.x;
+                    v.y = initialPt.y;
+                    dot.style.left = `${v.x}px`;
+                    dot.style.top = `${v.y}px`;
+                });
+            }
+
+            // 4. Bind Sensor Hitboxes
+            const elSensA = document.getElementById('sensor-A');
+            const elSensB = document.getElementById('sensor-B');
+            if (elSensA) elSensA.addEventListener('click', () => fireSensor('A'));
+            if (elSensB) elSensB.addEventListener('click', () => fireSensor('B'));
+
+            // Start Movement Loop
+            requestAnimationFrame(simulationLoop);
+        }
+
+        // =====================================================================
+        // 4. CORE RIPPLE LOGIC (AUTHORITATIVE EVENT ARCHITECTURE UNCHANGED)
+        // =====================================================================
+
+        function fireSensor(sourceId) {
+            const event = {
+                type: "obstruction",
+                position: sourceId,
+                timestamp: Date.now(),
+                sourceId: sourceId
+            };
+            receiveEvent(sourceId, event);
+        }
+
+        function receiveEvent(carId, event) {
+            const car = carsData[carId];
+            if (!car) return;
+
+            // 1. Strict deduplication (sourceId + timestamp)
+            const isDuplicate = car.events.some(e => e.sourceId === event.sourceId && e.timestamp === event.timestamp);
+            if (isDuplicate) return;
+
+            // 2. Add raw unmodified event to local store
+            car.events.push(event);
+
+            // Signal broadcast animation ripple
+            if (car.domInfo && car.domInfo.nodeEl) {
+                triggerSignalRipple(car.domInfo.nodeEl, event.sourceId);
+            }
+
+            // 3. Local Confirmation Calculation
+            updateCarUI(carId);
+
+            // 4. Propagate to next vehicle down the chain after relay delay (~600ms)
+            const nextCarId = nextCarMap[carId];
+            if (nextCarId) {
+                setTimeout(() => {
+                    relayEvent(carId, nextCarId, event);
+                }, 100);
+            }
+        }
+
+        function relayEvent(fromId, toId, event) {
+            const fromCar = carsData[fromId];
+            if (fromCar && fromCar.domInfo && fromCar.domInfo.nodeEl) {
+                triggerSignalRipple(fromCar.domInfo.nodeEl, event.sourceId);
+            }
+
+            // Model propagation travel time (~600ms)
+            setTimeout(() => {
+                receiveEvent(toId, event);
+            }, 600);
+        }
+
+        // Wireless V2V Transmission Ripple Visualization
+        function triggerSignalRipple(parentEl, sourceId) {
+            const container = document.getElementById('app-container');
+            if (!container || !parentEl) return;
+
+            const ripple = document.createElement('div');
+            ripple.className = 'v2v-ripple';
+            const rippleColor = (sourceId === 'A') ? COLORS.AMBER : COLORS.TEAL;
+            ripple.style.color = rippleColor;
+            ripple.style.borderColor = rippleColor;
+
+            ripple.style.left = parentEl.style.left;
+            ripple.style.top = parentEl.style.top;
+            container.appendChild(ripple);
+
+            setTimeout(() => ripple.remove(), 1300);
+        }
+
+        function updateCarUI(carId) {
+            const car = carsData[carId];
+            if (!car) return;
+
+            const hasA = car.events.some(e => e.sourceId === 'A');
+            const hasB = car.events.some(e => e.sourceId === 'B');
+            const sourceCount = (hasA ? 1 : 0) + (hasB ? 1 : 0);
+
+            let color = COLORS.TEAL;
+            let text = 'NORMAL';
+            let targetLaneOffset = 0;
+            let targetSpeed = BASE_CRUISE_SPEED;
+            let targetPath = PATH_MAIN_ARTERIAL;
+            let ruleReason = "NO EVENTS → NORMAL";
+            let showActivePulse = false;
+
+            // Specific confirmed & differentiated reaction rules
+            if (carId === 'A') {
+                if (hasA) {
+                    color = COLORS.AMBER;
+                    text = 'CAUTION: DETECTED';
+                    ruleReason = "SOURCE A FIRED → CAUTION (SLOWING)";
+                    targetSpeed = 15; // Slow down
+                    showActivePulse = true;
+                }
+            } 
+            else if (carId === 'B') {
+                if (hasA && !hasB) {
+                    color = COLORS.AMBER;
+                    text = 'CAUTION: EASING OFF';
+                    ruleReason = "SOURCE A RECEIVED → CAUTION: EASING OFF";
+                    targetSpeed = 22; // Ease off
+                    showActivePulse = true;
+                } else if (hasB && !hasA) {
+                    color = COLORS.TEAL;
+                    text = 'UNVERIFIED';
+                    ruleReason = "SOURCE B LOCAL ONLY → UNVERIFIED";
+                } else if (sourceCount === 2) {
+                    color = COLORS.CORAL;
+                    text = 'CONFIRMED: SECOND WITNESS';
+                    ruleReason = "SOURCES A & B SEEN → CONFIRMED";
+                    targetSpeed = 15;
+                    targetLaneOffset = 4; // Slight defensive lateral stance
+                    showActivePulse = true;
+                }
+            } 
+            else if (carId === 'C') {
+                if (sourceCount === 1) {
+                    color = COLORS.TEAL;
+                    text = 'RELAYING';
+                    ruleReason = `SINGLE SOURCE (${hasA ? 'A' : 'B'}) → UNVERIFIED (RELAYING)`;
+                } else if (sourceCount === 2) {
+                    color = COLORS.CORAL;
+                    text = 'CONFIRMED: COURSE ADJUSTMENT';
+                    ruleReason = "SOURCES A & B SEEN → CONFIRMED: MINOR COURSE ADJ";
+                    targetLaneOffset = -9; // Visibly steer off centerline
+                    targetSpeed = 26;
+                    showActivePulse = true;
+                }
+            } 
+            else if (carId === 'D') {
+                if (sourceCount === 1) {
+                    color = COLORS.TEAL;
+                    text = 'RELAYING';
+                    ruleReason = `SINGLE SOURCE (${hasA ? 'A' : 'B'}) → UNVERIFIED (RELAYING)`;
+                } else if (sourceCount === 2) {
+                    color = COLORS.CORAL;
+                    text = 'CONFIRMED: FULL REROUTE';
+                    ruleReason = "SOURCES A & B SEEN → CONFIRMED: FULL REROUTE";
+                    targetPath = PATH_ALT_NORTH_BYPASS; // Evaluate network & route via North Arc
+                    targetSpeed = 35;
+                    showActivePulse = true;
+                }
+            }
+
+            car.ruleReason = ruleReason;
+            car.targetLaneOffset = targetLaneOffset;
+            car.targetSpeed = targetSpeed;
+            car.targetPath = targetPath;
+
+            // Navigation decision implementation:
+            // If D receives confirmation before J1 (index <= 25), seamlessly switch path to North Bypass
+            if (car.path !== car.targetPath && car.pathIdx <= 25) {
+                car.path = car.targetPath;
+            }
+
+            // Visual DOM Updates
+            if (car.domInfo && car.domInfo.core) {
+                car.domInfo.core.style.backgroundColor = color;
+                car.domInfo.ring.style.borderColor = color;
+                car.domInfo.emitter.style.color = color;
+
+                const st = car.domInfo.subtag;
+                if (st) {
+                    st.innerText = text;
+                    st.style.color = color;
+                    st.style.borderColor = color;
+                    st.style.opacity = (text !== 'NORMAL') ? '1' : '0';
+                }
+                car.domInfo.ring.style.opacity = (text !== 'NORMAL') ? '0.9' : '0.45';
+
+                if (showActivePulse) {
+                    car.domInfo.nodeEl.classList.add('active-state');
+                } else {
+                    car.domInfo.nodeEl.classList.remove('active-state');
+                }
+            }
+
+            if (car.isHovered) {
+                refreshTooltipContent(carId);
+            }
+        }
+
+        // =====================================================================
+        // 5. VEHICLE NAVIGATION & DYNAMICS LOOP
+        // =====================================================================
+
+        let lastTime = performance.now();
+
+        // Recycle vehicles safely at edge of map for continuous observation
+        function recycleVehicle(car) {
+            car.events = [];
+            car.path = PATH_MAIN_ARTERIAL;
+            car.targetPath = PATH_MAIN_ARTERIAL;
+            car.pathIdx = 0;
+            car.laneOffset = 0;
+            car.targetLaneOffset = 0;
+            
+            const startPt = (car.path && car.path[0]) ? car.path[0] : { x: -40, y: 410 };
+            car.currentX = startPt.x;
+            car.currentY = startPt.y;
+
+            if (car.domInfo && car.domInfo.nodeEl) {
+                car.domInfo.nodeEl.style.left = `${car.currentX}px`;
+                car.domInfo.nodeEl.style.top = `${car.currentY}px`;
+            }
+
+            updateCarUI(car.id);
+        }
+
+        function simulationLoop(currentTime) {
+            const dt = Math.min((currentTime - lastTime) / 1000, 0.1);
+            lastTime = currentTime;
+
+            // 1. Advance RIPPLE Vehicles along network geometry
+            Object.keys(carsData).forEach(id => {
+                const car = carsData[id];
+                if (!car || !car.domInfo || !car.domInfo.nodeEl) return;
+
+                // Speed interpolation
+                if (car.speed < car.targetSpeed) {
+                    car.speed = Math.min(car.speed + 22 * dt, car.targetSpeed);
+                } else if (car.speed > car.targetSpeed) {
+                    car.speed = Math.max(car.speed - 35 * dt, car.targetSpeed);
+                }
+
+                // Following distance safety logic
+                let speedModifier = 1;
+                const leadId = followingLeadMap[id];
+                if (leadId && carsData[leadId]) {
+                    const leadCar = carsData[leadId];
+                    if (Number.isFinite(leadCar.currentX) && Number.isFinite(car.currentX)) {
+                        const dist = Math.hypot(leadCar.currentX - car.currentX, leadCar.currentY - car.currentY);
+                        if (dist > 0 && dist < 65) {
+                            speedModifier = Math.max(0, (dist - 28) / 37);
+                        }
+                    }
+                }
+
+                // Safe target waypoint evaluation
+                if (!car.path || !Array.isArray(car.path) || car.path.length === 0) {
+                    recycleVehicle(car);
+                    return;
+                }
+
+                const targetPt = car.path[car.pathIdx];
+                if (!targetPt || !Number.isFinite(targetPt.x) || !Number.isFinite(targetPt.y)) {
+                    recycleVehicle(car);
+                    return;
+                }
+
+                if (!Number.isFinite(car.currentX) || !Number.isFinite(car.currentY)) {
+                    car.currentX = targetPt.x;
+                    car.currentY = targetPt.y;
+                }
+
+                const step = car.speed * speedModifier * dt;
+                const dx = targetPt.x - car.currentX;
+                const dy = targetPt.y - car.currentY;
+                const distToPt = Math.hypot(dx, dy);
+
+                if (distToPt <= step || distToPt === 0) {
+                    car.currentX = targetPt.x;
+                    car.currentY = targetPt.y;
+                    car.pathIdx++;
+                    if (car.pathIdx >= car.path.length) {
+                        recycleVehicle(car);
+                        return;
+                    }
+                } else {
+                    car.currentX += (dx / distToPt) * step;
+                    car.currentY += (dy / distToPt) * step;
+                }
+
+                // Smooth lane offset steering (used by Car C course adjustment)
+                car.laneOffset += (car.targetLaneOffset - car.laneOffset) * 2.0 * dt;
+
+                const heading = Math.atan2(dy, dx);
+                const perp = heading - Math.PI / 2;
+                const renderX = car.currentX + Math.cos(perp) * car.laneOffset;
+                const renderY = car.currentY + Math.sin(perp) * car.laneOffset;
+
+                // Robust coordinate application with strict finite check
+                if (Number.isFinite(renderX) && Number.isFinite(renderY)) {
+                    car.domInfo.nodeEl.style.left = `${renderX}px`;
+                    car.domInfo.nodeEl.style.top = `${renderY}px`;
+                }
+            });
+
+            // 2. Update interactive sensor hitboxes to track Car A and Car B
+            const sensorA = document.getElementById('sensor-A');
+            const sensorB = document.getElementById('sensor-B');
+            if (sensorA && carsData.A && carsData.A.domInfo && carsData.A.domInfo.nodeEl) {
+                sensorA.style.left = carsData.A.domInfo.nodeEl.style.left;
+                sensorA.style.top = carsData.A.domInfo.nodeEl.style.top;
+            }
+            if (sensorB && carsData.B && carsData.B.domInfo && carsData.B.domInfo.nodeEl) {
+                sensorB.style.left = carsData.B.domInfo.nodeEl.style.left;
+                sensorB.style.top = carsData.B.domInfo.nodeEl.style.top;
+            }
+
+            // 3. Move Ambient Traffic through secondary network corridors
+            ambientVehicles.forEach(v => {
+                if (!v.el || !v.route || !v.route[v.ptIdx]) return;
+                const target = v.route[v.ptIdx];
+                const dx = target.x - v.x;
+                const dy = target.y - v.y;
+                const dist = Math.hypot(dx, dy);
+                const step = v.speed * dt;
+
+                if (dist <= step || dist === 0) {
+                    v.x = target.x;
+                    v.y = target.y;
+                    v.ptIdx = (v.ptIdx + 1) % v.route.length;
+                } else {
+                    v.x += (dx / dist) * step;
+                    v.y += (dy / dist) * step;
+                }
+
+                if (Number.isFinite(v.x) && Number.isFinite(v.y)) {
+                    v.el.style.left = `${v.x}px`;
+                    v.el.style.top = `${v.y}px`;
+                }
+            });
+
+            // 4. Update tooltip position if open
+            Object.keys(carsData).forEach(id => {
+                if (carsData[id] && carsData[id].isHovered) {
+                    refreshTooltipContent(id);
+                }
+            });
+
+            requestAnimationFrame(simulationLoop);
+        }
+
+        // =====================================================================
+        // 6. TOOLTIP OVERLAY LOGIC
+        // =====================================================================
+
+        const tooltipEl = document.getElementById('tooltip');
+
+        function showTooltip(carId) {
+            const car = carsData[carId];
+            if (!car) return;
+            car.isHovered = true;
+            refreshTooltipContent(carId);
+            if (tooltipEl) tooltipEl.style.opacity = '1';
+        }
+
+        function hideTooltip(carId) {
+            const car = carsData[carId];
+            if (!car) return;
+            car.isHovered = false;
+            if (tooltipEl) tooltipEl.style.opacity = '0';
+        }
+
+        function refreshTooltipContent(carId) {
+            const car = carsData[carId];
+            if (!car || !car.isHovered || !tooltipEl) return;
+
+            const eventsLog = car.events.length === 0
+                ? "<em>No hazards received</em>"
+                : car.events.map(e => `• EVENT: <b>SRC_${e.sourceId}</b> | POS_${e.position} | T+${e.timestamp.toString().slice(-4)}ms`).join('<br>');
+
+            tooltipEl.innerHTML = `
+                <div class="tooltip-hdr">NODE [${carId}] DECISION TELEMETRY</div>
+                <div class="tooltip-log">${eventsLog}</div>
+                <div class="tooltip-rule">${car.ruleReason}</div>
+            `;
+
+            if (car.domInfo && car.domInfo.nodeEl) {
+                tooltipEl.style.left = car.domInfo.nodeEl.style.left;
+                tooltipEl.style.top = `calc(${car.domInfo.nodeEl.style.top} - 32px)`;
+            }
+        }
+
+        // =====================================================================
+        // 7. WEB SERIAL PLACEHOLDER (UNTOUCHED)
+        // =====================================================================
+
+        function receiveLiveEvent(event) {
+            // Expected format: { type: "obstruction", position: <node id>, timestamp: <ms>, sourceId: "A" | "B" }
+            console.log("Hardware Web Serial V2V packet received:", event);
+            if (event.sourceId && carsData[event.sourceId]) {
+                receiveEvent(event.sourceId, event);
+            }
+        }
+
+        // Safe robust lifecycle initialization
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initSimulation);
+        } else {
+            initSimulation();
+        }
+    </script>
+</body>
+</html>
