@@ -2,161 +2,165 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-static char s_nodeId[4];
+static char s_nodeId[8];
 static bool s_hasSensor;
-static RippleEvent s_events[RIPPLE_MAX_EVENTS];
-static uint8_t s_eventCount = 0;
-static bool s_relayed[RIPPLE_MAX_EVENTS];
+static CorroborationEngine s_engine;
+static RippleEvent s_pendingRelays[RIPPLE_MAX_EVENTS];
 static uint32_t s_relayAtMs[RIPPLE_MAX_EVENTS];
+static bool s_relayed[RIPPLE_MAX_EVENTS];
+static size_t s_pendingCount = 0;
+
+static RippleEvent s_lastEvent;
+static bool s_hasLastEvent = false;
+
 static bool s_newEventFlag = false;
 static char s_reason[64] = "No events -> NORMAL";
 
 static uint8_t BROADCAST_ADDR[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
-// --- internal helpers -------------------------------------------------
-
-static int findEventIndex(const RippleEvent& e) {
-  for (uint8_t i = 0; i < s_eventCount; i++) {
-    if (s_events[i].valid &&
-        strcmp(s_events[i].sourceId, e.sourceId) == 0 &&
-        s_events[i].originMs == e.originMs) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-static void pruneExpired() {
-  uint32_t now = millis();
-  for (uint8_t i = 0; i < s_eventCount; i++) {
-    if (s_events[i].valid && (now - s_events[i].originMs) > RIPPLE_TTL_MS) {
-      s_events[i].valid = false;
-    }
-  }
-}
-
 static void recomputeReason() {
-  // Count distinct sourceIds among currently valid events within the
-  // corroboration window. This is the ONLY place "confirmed" is decided,
-  // and it only ever looks at sourceId identity, never at relay hop count.
-  bool sawA = false, sawB = false;
-  uint32_t now = millis();
-  for (uint8_t i = 0; i < s_eventCount; i++) {
-    if (!s_events[i].valid) continue;
-    if ((now - s_events[i].originMs) > RIPPLE_MATCH_WINDOW_MS) continue;
-    if (strcmp(s_events[i].sourceId, "A") == 0) sawA = true;
-    if (strcmp(s_events[i].sourceId, "B") == 0) sawB = true;
-  }
+    uint64_t now = millis();
+    uint8_t count = s_engine.getDistinctSourceCount(now);
+    RippleStatus status = s_engine.evaluateStatus(now);
 
-  uint8_t count = (sawA ? 1 : 0) + (sawB ? 1 : 0);
-  if (count == 0) {
-    snprintf(s_reason, sizeof(s_reason), "No events -> NORMAL");
-  } else if (count == 1) {
-    snprintf(s_reason, sizeof(s_reason), "Sources seen: %s only -> UNVERIFIED", sawA ? "A" : "B");
-  } else {
-    snprintf(s_reason, sizeof(s_reason), "Sources seen: A, B -> CONFIRMED");
-  }
+    if (status == RippleStatus::NORMAL) {
+        snprintf(s_reason, sizeof(s_reason), "No events -> NORMAL");
+    } else if (status == RippleStatus::UNVERIFIED) {
+        snprintf(s_reason, sizeof(s_reason), "Distinct sources: %u -> UNVERIFIED", count);
+    } else {
+        snprintf(s_reason, sizeof(s_reason), "Distinct sources: %u -> CONFIRMED", count);
+    }
 }
 
-static void storeAndMaybeRelay(const RippleEvent& incoming) {
-  if (findEventIndex(incoming) >= 0) return; // dedup: already have this exact witness report
+static void scheduleRelay(const RippleEvent& incoming) {
+    if (incoming.hopCount >= 10) return; // Max hop limit check
 
-  if (s_eventCount >= RIPPLE_MAX_EVENTS) {
-    // simple ring overwrite of the oldest slot, fine for a 4-node demo
-    for (uint8_t i = 1; i < s_eventCount; i++) s_events[i - 1] = s_events[i];
-    s_eventCount--;
-  }
+    if (s_pendingCount >= RIPPLE_MAX_EVENTS) {
+        for (size_t i = 1; i < RIPPLE_MAX_EVENTS; ++i) {
+            s_pendingRelays[i - 1] = s_pendingRelays[i];
+            s_relayAtMs[i - 1] = s_relayAtMs[i];
+            s_relayed[i - 1] = s_relayed[i];
+        }
+        s_pendingCount = RIPPLE_MAX_EVENTS - 1;
+    }
 
-  s_events[s_eventCount] = incoming;
-  s_relayed[s_eventCount] = false;
-  // small randomized delay avoids every node rebroadcasting in the same
-  // instant, and gives the visualization a visible, deliberate ripple
-  s_relayAtMs[s_eventCount] = millis() + 400 + random(0, 300);
-  s_eventCount++;
+    RippleEvent e = incoming;
+    e.hopCount++; // Increment hop count on relay, sourceId & timestamp UNTOUCHED
 
-  s_newEventFlag = true;
-  recomputeReason();
+    s_pendingRelays[s_pendingCount] = e;
+    // Short random delay (5-15 ms) to avoid packet collision on relay
+    s_relayAtMs[s_pendingCount] = millis() + random(5, 16);
+    s_relayed[s_pendingCount] = false;
+    s_pendingCount++;
 }
 
-static void onEspNowRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
-  if (len != (int)sizeof(RippleEvent)) return;
-  RippleEvent incoming;
-  memcpy(&incoming, data, sizeof(RippleEvent));
-  if (!incoming.valid) return;
-  storeAndMaybeRelay(incoming);
-}
+static void onEspNowRecv(const uint8_t* mac_addr, const uint8_t* data, int len) {
+    RippleEvent incoming;
+    if (!RippleSerialization::deserializeFromJSONPayload(data, len, incoming)) {
+        // Fallback: try direct struct copy if binary payload was transmitted
+        if (len == (int)sizeof(RippleEvent)) {
+            memcpy(&incoming, data, sizeof(RippleEvent));
+        } else {
+            return;
+        }
+    }
 
-// --- public API ---------------------------------------------------------
+    if (incoming.sourceId[0] == '\0') return;
+
+    if (s_engine.addEvent(incoming, millis())) {
+        s_lastEvent = incoming;
+        s_hasLastEvent = true;
+        scheduleRelay(incoming);
+        s_newEventFlag = true;
+        recomputeReason();
+    }
+}
 
 void rippleBegin(const char* nodeId, bool hasSensor) {
-  strncpy(s_nodeId, nodeId, sizeof(s_nodeId) - 1);
-  s_hasSensor = hasSensor;
+    strncpy(s_nodeId, nodeId, sizeof(s_nodeId) - 1);
+    s_nodeId[sizeof(s_nodeId) - 1] = '\0';
+    s_hasSensor = hasSensor;
+    s_engine.clear();
+    s_pendingCount = 0;
+    s_hasLastEvent = false;
 
-  WiFi.mode(WIFI_STA);
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("[RippleCore] ESP-NOW init failed");
-    return;
-  }
-  esp_now_recv_cb_t recvCb = reinterpret_cast<esp_now_recv_cb_t>(onEspNowRecv);
-  esp_now_register_recv_cb(recvCb);
+    WiFi.mode(WIFI_STA);
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("[RippleCore] ESP-NOW init failed");
+        return;
+    }
+    esp_now_recv_cb_t recvCb = reinterpret_cast<esp_now_recv_cb_t>(onEspNowRecv);
+    esp_now_register_recv_cb(recvCb);
 
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, BROADCAST_ADDR, 6);
-  peer.channel = 0;
-  peer.encrypt = false;
-  esp_now_add_peer(&peer);
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, BROADCAST_ADDR, 6);
+    peer.channel = 0;
+    peer.encrypt = false;
+    esp_now_add_peer(&peer);
 }
 
 void rippleFireLocalWitness() {
-  if (!s_hasSensor) return; // only A and B may originate a witness report
-  RippleEvent e;
-  strncpy(e.type, "obstruction", sizeof(e.type));
-  strncpy(e.position, s_nodeId, sizeof(e.position));
-  strncpy(e.sourceId, s_nodeId, sizeof(e.sourceId));
-  e.originMs = millis();
-  e.valid = true;
-  storeAndMaybeRelay(e);
-  // broadcast immediately, this node's own origin report goes out right away,
-  // relay of OTHER nodes' reports still uses the randomized delay above
-  esp_now_send(BROADCAST_ADDR, (uint8_t*)&e, sizeof(e));
+    if (!s_hasSensor) return; // Only sensor nodes originate witness reports
+
+    RippleEvent e;
+    strncpy(e.type, "obstruction", sizeof(e.type) - 1);
+    strncpy(e.position, s_nodeId, sizeof(e.position) - 1);
+    strncpy(e.sourceId, s_nodeId, sizeof(e.sourceId) - 1);
+    e.timestamp = (uint64_t)millis();
+    e.hopCount = 0;
+    e.eventId = e.computeEventId();
+
+    if (s_engine.addEvent(e, millis())) {
+        s_lastEvent = e;
+        s_hasLastEvent = true;
+        s_newEventFlag = true;
+        recomputeReason();
+    }
+
+    // Broadcast raw JSON payload via ESP-NOW
+    String payload = RippleSerialization::serializeToJSONPayload(e);
+    esp_now_send(BROADCAST_ADDR, (const uint8_t*)payload.c_str(), payload.length());
 }
 
 void rippleLoop() {
-  pruneExpired();
-  uint32_t now = millis();
-  for (uint8_t i = 0; i < s_eventCount; i++) {
-    if (!s_events[i].valid || s_relayed[i]) continue;
-    if (now >= s_relayAtMs[i]) {
-      esp_now_send(BROADCAST_ADDR, (uint8_t*)&s_events[i], sizeof(RippleEvent));
-      s_relayed[i] = true;
+    uint64_t now = millis();
+    s_engine.pruneOldEvents(now);
+    recomputeReason();
+
+    for (size_t i = 0; i < s_pendingCount; ++i) {
+        if (s_relayed[i]) continue;
+        if (now >= s_relayAtMs[i]) {
+            String payload = RippleSerialization::serializeToJSONPayload(s_pendingRelays[i]);
+            esp_now_send(BROADCAST_ADDR, (const uint8_t*)payload.c_str(), payload.length());
+            s_relayed[i] = true;
+        }
     }
-  }
 }
 
 RippleStatus rippleGetStatus() {
-  bool sawA = false, sawB = false;
-  uint32_t now = millis();
-  for (uint8_t i = 0; i < s_eventCount; i++) {
-    if (!s_events[i].valid) continue;
-    if ((now - s_events[i].originMs) > RIPPLE_MATCH_WINDOW_MS) continue;
-    if (strcmp(s_events[i].sourceId, "A") == 0) sawA = true;
-    if (strcmp(s_events[i].sourceId, "B") == 0) sawB = true;
-  }
-  if (sawA && sawB) return RIPPLE_CONFIRMED;
-  if (sawA || sawB) return RIPPLE_UNVERIFIED;
-  return RIPPLE_NORMAL;
+    return s_engine.evaluateStatus(millis());
 }
 
 uint8_t rippleGetDistinctSourceCount() {
-  RippleStatus s = rippleGetStatus();
-  if (s == RIPPLE_CONFIRMED) return 2;
-  if (s == RIPPLE_UNVERIFIED) return 1;
-  return 0;
+    return s_engine.getDistinctSourceCount(millis());
 }
 
-const char* rippleGetReason() { return s_reason; }
+const char* rippleGetReason() {
+    return s_reason;
+}
 
 bool rippleHasNewEvent() {
-  if (s_newEventFlag) { s_newEventFlag = false; return true; }
-  return false;
+    if (s_newEventFlag) {
+        s_newEventFlag = false;
+        return true;
+    }
+    return false;
+}
+
+CorroborationEngine& rippleGetEngine() {
+    return s_engine;
+}
+
+const RippleEvent* rippleGetLastEvent() {
+    return s_hasLastEvent ? &s_lastEvent : nullptr;
 }
